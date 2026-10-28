@@ -33,6 +33,7 @@ _DEADLINE_RE = re.compile(
     rf"\b(on or before|by|no later than|not later than|until|prior to|before)\s+({_MONTHS})\s+\d{{1,2}},\s+(\d{{4}})", re.I)
 _YEAR_REF_RE = re.compile(r"\b(calendar|fiscal|model|crop|reporting) years?\s+(19\d{2}|20[01]\d)\b", re.I)
 _WORD_RE = re.compile(r"[a-z][a-z\-]+")
+_REF_RE = re.compile(r"§+\s*(\d+\.\d+[a-z]*)")
 _STOPWORDS = frozenset("""
 a an and are as at be been by for from has have in is it its may must of on or such that the
 their them then there these this those to under upon was were which who will with within shall
@@ -112,6 +113,7 @@ class TfIdf:
         n = max(len(self.docs), 1)
         self.idf = {t: math.log((1 + n) / (1 + c)) + 1 for t, c in df.items()}
         self.vectors = [self._vector(doc) for doc in self.docs]
+        self.refs = [set(_REF_RE.findall(d)) for d in documents]
 
     def _vector(self, counts: Counter) -> dict[str, float]:
         vec = {t: c * self.idf.get(t, 1.0) for t, c in counts.items()}
@@ -119,10 +121,16 @@ class TfIdf:
         return {t: v / norm for t, v in vec.items()}
 
     def cosine(self, i: int, j: int) -> float:
+        """Word cosine, scaled by how much the cross-references agree:
+        "records as specified in § 60.395a" vs "... § 60.5420" share every word
+        but are different obligations; citing the same section is no evidence
+        of duplication on its own, so matching references don't add anything."""
         a, b = self.vectors[i], self.vectors[j]
         if len(a) > len(b):
             a, b = b, a
-        return sum(v * b.get(t, 0.0) for t, v in a.items())
+        words = sum(v * b.get(t, 0.0) for t, v in a.items())
+        ra, rb = self.refs[i], self.refs[j]
+        return words * (len(ra & rb) / len(ra | rb) if ra or rb else 1.0)
 
     def shared_terms(self, i: int, j: int, k: int = 8) -> list[str]:
         a, b = self.vectors[i], self.vectors[j]
@@ -138,19 +146,41 @@ def similarity(a: str, b: str, corpus: list[str] | None = None) -> float:
 
 
 def find_duplicates(reqs: list[Requirement], threshold: float = 0.55) -> list[Flag]:
+    """Group near-identical requirements into one flag per group.
+
+    The same boilerplate sentence often recurs across dozens of subparts, so
+    pairwise flags explode quadratically. Groups form around a seed: a
+    requirement joins only if it is within `threshold` of the seed itself,
+    which keeps single-linkage chaining from merging unrelated text."""
     model = TfIdf([r.text for r in reqs])
-    flags = []
+    neighbours: dict[int, dict[int, float]] = {i: {} for i in range(len(reqs))}
     for i, j in combinations(range(len(reqs)), 2):
-        a, b = reqs[i], reqs[j]
-        if a.section == b.section and a.paragraph == b.paragraph:
+        if reqs[i].section == reqs[j].section and reqs[i].paragraph == reqs[j].paragraph:
             continue  # sentences of one paragraph restate each other by design
         score = model.cosine(i, j)
         if score >= threshold:
-            shared = model.shared_terms(i, j)
-            flags.append(Flag("duplicate", [a, b], score,
-                              f"{a.citation} and {b.citation} impose near-identical reporting obligations",
-                              [{"kind": "text_similarity", "cosine": round(score, 4), "shared_terms": shared}]))
-    return sorted(flags, key=lambda f: -f.score)
+            neighbours[i][j] = neighbours[j][i] = score
+    assigned: set[int] = set()
+    flags = []
+    for seed in sorted(neighbours, key=lambda i: (-len(neighbours[i]), i)):
+        if seed in assigned or not neighbours[seed]:
+            continue
+        members = sorted((j for j in neighbours[seed] if j not in assigned), key=lambda j: -neighbours[seed][j])
+        if not members:
+            continue
+        assigned.update([seed, *members])
+        group = [reqs[seed], *(reqs[j] for j in members)]
+        sims = [neighbours[seed][j] for j in members]
+        sections = sorted({r.section for r in group})
+        reason = (f"{group[0].citation} and {group[1].citation} impose near-identical reporting obligations"
+                  if len(group) == 2 else
+                  f"{len(group)} near-identical reporting requirements across {len(sections)} sections")
+        flags.append(Flag("duplicate", group, sum(sims) / len(sims), reason, [{
+            "kind": "text_similarity", "seed": group[0].citation, "min_cosine": round(min(sims), 4),
+            "shared_terms": model.shared_terms(seed, members[0]),
+            "members": [{"citation": reqs[j].citation, "cosine": round(neighbours[seed][j], 4)} for j in members],
+        }]))
+    return sorted(flags, key=lambda f: (-len(f.requirements), -f.score))
 
 
 def candidate_pairs(reqs: list[Requirement], floor: float = 0.30) -> list[tuple[Requirement, Requirement, float]]:

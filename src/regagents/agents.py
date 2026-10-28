@@ -1,8 +1,8 @@
 """The three specialist agents. Each is an A2A server; each reaches eCFR only
 through the gateway, with the tool grants in mesh.yaml:
 
-    retriever  ecfr: get_part, search, list_titles   pulls regulation text
-    flagger    (no tools)                            finds duplicate / outdated requirements
+    retriever  ecfr: get_part, search, list_titles   pulls regulation text, extracts requirements
+    flagger    (no tools)                            groups duplicates, flags outdated requirements
     citer      ecfr: get_section                     re-reads each cited section and verifies quotes
 """
 
@@ -22,13 +22,18 @@ from regagents.judge import judge_duplicate, judge_outdated
 # -- retriever --------------------------------------------------------------------
 
 async def retrieve(payload: dict[str, Any], ctx: AgentContext) -> dict[str, Any]:
+    """Pull the parts and extract their reporting requirements here, next to
+    the text: a CFR part is 9-18 MB of JSON, its requirements about a quarter of that."""
     title = int(payload["title"])
     parts = payload.get("parts") or [payload["part"]]
     sections = []
     async with ctx.mesh.mcp("ecfr") as ecfr:
         for part in parts:
             sections += await ecfr.call("get_part", title=title, part=str(part), date=payload.get("date"))
-    return {"title": title, "parts": [str(p) for p in parts], "sections": sections}
+    reqs = extract_requirements([Section.from_dict(s) for s in sections])
+    return {"title": title, "parts": [str(p) for p in parts], "sections": len(sections),
+            "as_of": next((s.get("date") for s in sections if s.get("date")), None),
+            "requirements": [r.to_dict() for r in reqs]}
 
 
 def retriever(url: str = "http://127.0.0.1:9201", mesh: MeshClient | None = None):
@@ -43,11 +48,10 @@ def retriever(url: str = "http://127.0.0.1:9201", mesh: MeshClient | None = None
 # -- flagger ------------------------------------------------------------------------
 
 async def flag(payload: dict[str, Any], ctx: AgentContext) -> dict[str, Any]:
-    sections = [Section.from_dict(s) for s in payload["sections"]]
-    reqs = extract_requirements(sections)
-    flags = find_duplicates(reqs, threshold=float(payload.get("duplicate_threshold", 0.55)))
-    flags += find_outdated(reqs)
-    flags = flags[: int(payload.get("max_flags", 200))]
+    reqs = [Requirement(**r) for r in payload["requirements"]]
+    cap = int(payload.get("max_flags", 200))  # per type, so duplicates can't crowd out outdated flags
+    flags = find_duplicates(reqs, threshold=float(payload.get("duplicate_threshold", 0.55)))[:cap]
+    flags += find_outdated(reqs)[:cap]
 
     llm = ClaudeJSON.from_env()
     if llm is not None:

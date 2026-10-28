@@ -18,7 +18,7 @@ async def review(mesh: MeshClient, title: int, parts: list[str], date: str | Non
     timings["retrieve_s"] = time.perf_counter() - t
 
     t = time.perf_counter()
-    flagged = await mesh.call_agent("flagger", {"sections": corpus["sections"],
+    flagged = await mesh.call_agent("flagger", {"requirements": corpus["requirements"],
                                                 "duplicate_threshold": duplicate_threshold})
     timings["flag_s"] = time.perf_counter() - t
 
@@ -26,10 +26,9 @@ async def review(mesh: MeshClient, title: int, parts: list[str], date: str | Non
     cited = await mesh.call_agent("citer", {"title": title, "flags": flagged["flags"]})
     timings["cite_s"] = time.perf_counter() - t
 
-    as_of = next((s.get("date") for s in corpus["sections"] if s.get("date")), None)
     return {
-        "title": title, "parts": parts, "as_of": as_of,
-        "sections": len(corpus["sections"]),
+        "title": title, "parts": parts, "as_of": corpus["as_of"],
+        "sections": corpus["sections"],
         "requirements_found": flagged["requirements_found"],
         "judge": flagged.get("judge"),
         "flags": cited["flags"],
