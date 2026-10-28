@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SYNTHETIC test fixture shaped like eCFR versioner XML. Not real regulation text. -->
+<DIV5 N="900" TYPE="PART">
+  <HEAD>PART 900—SYNTHETIC EMISSIONS REPORTING</HEAD>
+  <DIV6 N="A" TYPE="SUBPART">
+    <HEAD>Subpart A—General Provisions</HEAD>
+    <DIV8 N="§ 900.1" TYPE="SECTION">
+      <HEAD>§ 900.1 Applicability.</HEAD>
+      <P>(a) This part applies to each owner or operator of a widget furnace.</P>
+      <P>(b) The Administrator may waive any requirement of this part.</P>
+    </DIV8>
+    <DIV8 N="§ 900.2" TYPE="SECTION">
+      <HEAD>§ 900.2 Notification and recordkeeping.</HEAD>
+      <P>(a) Each owner or operator shall submit to the Administrator an annual report of total widget furnace emissions for the preceding calendar year.</P>
+      <P>(b)(1) The owner or operator shall maintain records of each furnace startup and shutdown for at least 5 years.</P>
+      <P>(2) Records required by paragraph (b)(1) of this section may be kept electronically.</P>
+      <P>(i) Electronic records must be retrievable within 2 business days.</P>
+      <P>(ii) The owner or operator shall notify the Administrator by facsimile within 24 hours of any furnace malfunction.</P>
+      <P>(c) Each owner or operator shall submit an initial notification of construction on or before <E T="03">June 1, 1985</E>.</P>
+    </DIV8>
+    <DIV8 N="§ 900.3" TYPE="SECTION">
+      <HEAD>§ 900.3 Annual reports.</HEAD>
+      <P>(a) The owner or operator of a widget furnace shall submit to the Administrator an annual report of the total emissions from each widget furnace for the preceding calendar year.</P>
+      <P>(b) Foreign-national operators shall file Form W-9 with the Immigration and Naturalization Service.</P>
+      <P>(c) Reports shall be signed by a responsible official.</P>
+    </DIV8>
+  </DIV6>
+</DIV5>

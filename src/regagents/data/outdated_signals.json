@@ -1,0 +1,20 @@
+{
+  "_about": "Phrases that suggest a requirement predates current practice. Each is a signal for human review, not proof: a regulation can still legitimately mention a fax number. Extend this list as labeling turns up new patterns, and re-run the eval to see the effect.",
+  "signals": [
+    {"pattern": "\\b(facsimile|telefax|fax(ed)?)\\b", "category": "obsolete_technology", "note": "fax as a required submission channel"},
+    {"pattern": "\\b(telex|telegram|telegraph(ic)?|teletype(writer)?|TWX)\\b", "category": "obsolete_technology", "note": "telegraph-era communication"},
+    {"pattern": "\\b(microfiche|microfilm|aperture cards?)\\b", "category": "obsolete_technology", "note": "film-based record storage"},
+    {"pattern": "\\b(diskettes?|floppy dis[ck]s?|magnetic tapes?|computer tapes?|punch(ed)? cards?|compact dis[ck]s?|CD-ROMs?)\\b", "category": "obsolete_technology", "note": "physical media for electronic submissions"},
+    {"pattern": "\\bImmigration and Naturalization Service\\b", "category": "defunct_agency", "note": "INS was abolished in 2003; functions moved to DHS (USCIS, ICE, CBP)"},
+    {"pattern": "\\bMinerals Management Service\\b", "category": "defunct_agency", "note": "MMS was reorganized in 2010 into BOEM, BSEE and ONRR"},
+    {"pattern": "\\bOffice of Thrift Supervision\\b", "category": "defunct_agency", "note": "OTS was merged into the OCC and others in 2011"},
+    {"pattern": "\\bHealth Care Financing Administration\\b", "category": "defunct_agency", "note": "HCFA was renamed CMS in 2001"},
+    {"pattern": "\\bInterstate Commerce Commission\\b", "category": "defunct_agency", "note": "ICC was abolished in 1995"},
+    {"pattern": "\\bFederal Home Loan Bank Board\\b", "category": "defunct_agency", "note": "FHLBB was abolished in 1989"},
+    {"pattern": "\\bCivil Aeronautics Board\\b", "category": "defunct_agency", "note": "CAB was abolished in 1985"},
+    {"pattern": "\\bDepartment of Health, Education,? and Welfare\\b", "category": "defunct_agency", "note": "HEW was split in 1979 into HHS and the Department of Education"},
+    {"pattern": "\\bAtomic Energy Commission\\b", "category": "defunct_agency", "note": "AEC was abolished in 1974 (NRC and ERDA/DOE)"},
+    {"pattern": "\\bBureau of Alcohol, Tobacco and Firearms\\b", "category": "defunct_agency", "note": "renamed ATF (Alcohol, Tobacco, Firearms and Explosives) in 2003; tax functions to TTB"},
+    {"pattern": "\\bU\\.?S\\.? Customs Service\\b", "category": "defunct_agency", "note": "U.S. Customs Service became part of CBP in 2003"}
+  ]
+}

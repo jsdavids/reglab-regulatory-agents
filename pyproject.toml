@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "regagents"
+version = "0.1.0"
+description = "Regulatory research agents: pull eCFR text over MCP, flag duplicate or outdated reporting requirements, and cite the exact sections relied on. Evaluated against hand labels."
+requires-python = ">=3.12"
+dependencies = [
+    "agentmesh",
+    "httpx>=0.28",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+llm = ["agentmesh[llm]"]
+
+[project.scripts]
+regagents = "regagents.cli:main"
+
+[tool.uv.sources]
+agentmesh = { path = "../agent-mesh-core", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/regagents"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

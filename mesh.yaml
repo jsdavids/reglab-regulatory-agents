@@ -1,0 +1,35 @@
+# Regulatory research mesh. From this directory:
+#   export AGENTMESH_SECRET=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
+#   agentmesh up mesh.yaml
+#   regagents review --title 40 --parts 60 --out reports/40-cfr-60
+gateway:
+  port: 8100
+
+mcp_servers:
+  ecfr: {url: "http://127.0.0.1:9110/mcp"}
+
+agents:
+  retriever: {url: "http://127.0.0.1:9211"}
+  flagger:   {url: "http://127.0.0.1:9212"}
+  citer:     {url: "http://127.0.0.1:9213"}
+
+principals:
+  orchestrator:
+    agents: [retriever, flagger, citer]   # delegates only; no tool grants
+  retriever:
+    mcp: {ecfr: [get_part, search, list_titles]}
+  citer:
+    mcp: {ecfr: [get_section]}            # least privilege: re-reads cited sections only
+  flagger: {}                             # pure analysis; any tool call is denied
+
+services:
+  - {name: ecfr,      app: "regagents.mcp_ecfr:app",     port: 9110}
+  - {name: retriever, app: "regagents.agents:retriever", port: 9211, principal: retriever}
+  - {name: flagger,   app: "regagents.agents:flagger",   port: 9212, principal: flagger}
+  - {name: citer,     app: "regagents.agents:citer",     port: 9213, principal: citer}
+
+audit:
+  path: audit/gateway.jsonl
+
+tracing:
+  exporter: none   # otlp + endpoint: http://localhost:6006/v1/traces sends traces to Phoenix
