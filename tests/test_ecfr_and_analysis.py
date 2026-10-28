@@ -1,8 +1,11 @@
+import random
 from datetime import date
+from itertools import combinations
 
 from ecfr_mock import transport
 
-from regagents.analysis import extract_requirements, find_duplicates, find_outdated, split_sentences
+from regagents.analysis import (Requirement, TfIdf, extract_requirements, find_boilerplate, find_duplicates,
+                                find_outdated, same_scope, split_sentences)
 from regagents.ecfr import EcfrApi, Paragraph, Section, parse_part_xml
 
 
@@ -12,7 +15,9 @@ def api():
 
 def test_parse_part_labels_and_metadata():
     sections = {s.section: s for s in api().part(99, "900")}
-    assert list(sections) == ["900.1", "900.2", "900.3"]
+    assert list(sections) == ["900.1", "900.2", "900.3", "900.20", "900.30"]
+    assert (sections["900.2"].subpart, sections["900.2"].subpart_heading) == ("A", "Subpart A—General Provisions")
+    assert sections["900.30"].subpart == "C"
     s = sections["900.2"]
     assert s.heading == "Notification and recordkeeping."
     assert [p.label for p in s.paragraphs] == ["(a)", "(b)(1)", "(b)(2)", "(b)(2)(i)", "(b)(2)(ii)", "(c)"]
@@ -103,7 +108,7 @@ def test_repeated_boilerplate_becomes_one_group_without_chaining():
     sections.append(Section(1, "1", "1.9", "x", [Paragraph("(a)", "Each operator shall keep records of opacity readings for five years.")]))
     groups = find_duplicates(extract_requirements(sections))
     assert len(groups) == 1 and len(groups[0].requirements) == 5  # not 10 pairs
-    assert "5 near-identical reporting requirements across 5 sections" == groups[0].reason
+    assert groups[0].reason == "4 reporting requirements near-identical to 1 CFR 1.1(a), across 5 sections"
 
 
 def test_cross_references_distinguish_otherwise_identical_text():
@@ -112,3 +117,44 @@ def test_cross_references_distinguish_otherwise_identical_text():
     c = Section(1, "1", "1.3", "x", [Paragraph("(a)", "You must maintain records as specified in § 60.395a.")])
     groups = find_duplicates(extract_requirements([a, b, c]))
     assert [{r.section for r in g.requirements} for g in groups] == [{"1.1", "1.3"}]
+
+
+def test_sparse_pairs_match_pairwise_cosine():
+    rng = random.Random(7)
+    words = "owner operator submit report records notification annual semiannual emissions furnace test".split()
+    refs = ["§ 60.7", "§ 60.8", "§ 63.10"]
+    docs = [" ".join(rng.choices(words, k=rng.randint(3, 12))) + (f" as in {rng.choice(refs)}" if rng.random() < 0.4 else "")
+            for _ in range(300)]
+    model = TfIdf(docs)
+    fast = {(i, j): s for i, j, s in model.pairs(0.3, block=37)}  # odd block size crosses boundaries
+    slow = {(i, j): s for i, j in combinations(range(len(docs)), 2) if (s := model.cosine(i, j)) >= 0.3}
+    assert fast.keys() == slow.keys() and len(fast) > 100
+    assert max(abs(fast[k] - slow[k]) for k in fast) < 1e-9
+
+
+def _req(section, subpart, heading, text="The owner or operator shall submit an annual report."):
+    return Requirement(id=section, citation=f"40 CFR {section}", section=section, paragraph="(a)", heading="",
+                       text=text, url="", subpart=subpart, subpart_heading=heading)
+
+
+def test_scope_follows_subparts_and_general_provisions():
+    general = _req("60.7", "A", "Subpart A—General Provisions")
+    kraft = _req("60.285", "BB", "Subpart BB—Standards of Performance for Kraft Pulp Mills")
+    glass = _req("60.296", "CC", "Subpart CC—Standards of Performance for Glass Manufacturing Plants")
+    other_part = _req("63.10", "A", "Subpart A—General Provisions")
+    assert same_scope(kraft, _req("60.284", "BB", kraft.subpart_heading))
+    assert not same_scope(kraft, glass)  # different source categories, different parties
+    assert same_scope(general, kraft) and same_scope(glass, general)  # General Provisions bind every subpart
+    assert not same_scope(general, other_part)  # parts 60 and 63 each have their own
+    [group] = find_duplicates([general, kraft, glass])
+    assert group.reason == "2 requirements in 2 subparts restate the General Provisions at 40 CFR 60.7"
+    [boiler] = find_boilerplate([general, kraft, glass])  # and the two subparts repeat each other
+    assert {r.section for r in boiler.requirements} == {"60.285", "60.296"}
+
+
+def test_cross_subpart_repeats_are_boilerplate_not_duplicates():
+    reqs = extract_requirements(api().part(99, "900"))
+    assert [{r.citation for r in f.requirements} for f in find_duplicates(reqs)] == [{"99 CFR 900.2(a)", "99 CFR 900.3(a)"}]
+    [boiler] = find_boilerplate(reqs)
+    assert {r.citation for r in boiler.requirements} == {"99 CFR 900.20(a)", "99 CFR 900.30(a)"}
+    assert boiler.signals[0]["subparts"] == ["900 B", "900 C"]

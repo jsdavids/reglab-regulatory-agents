@@ -38,13 +38,14 @@ async def test_review_pipeline(mesh):
     report = await review(mesh.client("orchestrator"), 99, ["900"])
     assert report["as_of"] == "2026-10-20"
     types = {f["type"] for f in report["flags"]}
-    assert types == {"duplicate", "outdated"}
+    assert types == {"duplicate", "boilerplate", "outdated"}
+    assert report["found"] == {"duplicate": 1, "boilerplate": 1, "outdated": 3}
     assert report["unverified"] == []
     for f in report["flags"]:
         for c in f["citations"]:
             assert c["verified"] and c["url"].startswith("https://www.ecfr.gov/current/title-99/section-900.")
     md = to_markdown(report)
-    assert "99 CFR 900.2(a)" in md and "facsimile" in md
+    assert "99 CFR 900.2(a)" in md and "facsimile" in md and "## Repeated across subparts (1)" in md
 
 
 async def test_citer_drops_fabricated_quotes(mesh):

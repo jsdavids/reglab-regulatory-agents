@@ -42,6 +42,8 @@ class Section:
     paragraphs: list[Paragraph] = field(default_factory=list)
     date: str | None = None
     last_amended: str | None = None
+    subpart: str = ""  # "A", "Ja", "OOOOa"; "" for a part without subparts
+    subpart_heading: str = ""  # "Subpart A—General Provisions"
 
     @property
     def citation(self) -> str:
@@ -64,6 +66,7 @@ class Section:
     def from_dict(cls, d: dict[str, Any]) -> Section:
         return cls(title=int(d["title"]), part=str(d["part"]), section=str(d["section"]),
                    heading=d.get("heading", ""), date=d.get("date"), last_amended=d.get("last_amended"),
+                   subpart=d.get("subpart", ""), subpart_heading=d.get("subpart_heading", ""),
                    paragraphs=[Paragraph(**p) for p in d.get("paragraphs", [])])
 
 
@@ -115,39 +118,51 @@ def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _section_divs(el: ET.Element, subpart: tuple[str, str] = ("", "")):
+    """Section DIVs in document order, each with the subpart that contains it."""
+    if el.tag.startswith("DIV") and el.get("TYPE") == "SUBPART":
+        head = el.find("HEAD")
+        subpart = (el.get("N") or "", _clean("".join(head.itertext())) if head is not None else "")
+    if el.tag.startswith("DIV") and el.get("TYPE") == "SECTION":
+        yield el, subpart
+        return
+    for child in el:
+        yield from _section_divs(child, subpart)
+
+
 def parse_part_xml(xml: str, title: int, part: str, date: str | None = None) -> list[Section]:
     root = ET.fromstring(xml)
     sections = []
-    for div in root.iter():
-        if div.tag.startswith("DIV") and div.get("TYPE") == "SECTION":
-            number = (div.get("N") or "").replace("§", "").strip()
-            head = div.find("HEAD")
-            heading = _clean("".join(head.itertext())) if head is not None else ""
-            heading = re.sub(r"^§+\s*[\d.]+\s*", "", heading)
-            raw = []
-            for p in div.iter("P"):
-                text = _clean("".join(p.itertext()))
-                if not text:
-                    continue
-                labels, rest = [], text
-                while (m := _LABEL_RE.match(rest)):
-                    labels.append(m.group(1))
-                    rest = rest[m.end():]
-                raw.append((text, labels, _leading_italic(p)))
-            paragraphs, stack = [], []
-            for i, (text, labels, italic) in enumerate(raw):
-                if labels:
-                    following = next((lbls[0] for _, lbls, _ in raw[i + 1:] if lbls), None)
-                    level = _level(labels[0], stack, labels[1] if len(labels) > 1 else following, italic)
-                    stack = _push(stack, level, labels[0])
-                    # a chain like "(c)(1)(i)" or an inline "(1)(i)" after a heading
-                    # nests one level per designation
-                    for token in labels[1:] + _inline_children(text, stack[-1][0]):
-                        stack = _push(stack, stack[-1][0] + 1, token)
-                label = "".join(f"({t})" for _, t in stack) if labels else ""
-                paragraphs.append(Paragraph(label=label, text=text))
-            sections.append(Section(title=title, part=part, section=number, heading=heading,
-                                    paragraphs=paragraphs, date=date))
+    for div, (subpart, subpart_heading) in _section_divs(root):
+        number = (div.get("N") or "").replace("§", "").strip()
+        head = div.find("HEAD")
+        heading = _clean("".join(head.itertext())) if head is not None else ""
+        heading = re.sub(r"^§+\s*[\d.]+\s*", "", heading)
+        raw = []
+        for p in div.iter("P"):
+            text = _clean("".join(p.itertext()))
+            if not text:
+                continue
+            labels, rest = [], text
+            while (m := _LABEL_RE.match(rest)):
+                labels.append(m.group(1))
+                rest = rest[m.end():]
+            raw.append((text, labels, _leading_italic(p)))
+        paragraphs, stack = [], []
+        for i, (text, labels, italic) in enumerate(raw):
+            if labels:
+                following = next((lbls[0] for _, lbls, _ in raw[i + 1:] if lbls), None)
+                level = _level(labels[0], stack, labels[1] if len(labels) > 1 else following, italic)
+                stack = _push(stack, level, labels[0])
+                # a chain like "(c)(1)(i)" or an inline "(1)(i)" after a heading
+                # nests one level per designation
+                for token in labels[1:] + _inline_children(text, stack[-1][0]):
+                    stack = _push(stack, stack[-1][0] + 1, token)
+            label = "".join(f"({t})" for _, t in stack) if labels else ""
+            paragraphs.append(Paragraph(label=label, text=text))
+        sections.append(Section(title=title, part=part, section=number, heading=heading,
+                                paragraphs=paragraphs, date=date, subpart=subpart,
+                                subpart_heading=subpart_heading))
     return sections
 
 

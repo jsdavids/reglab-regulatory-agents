@@ -8,6 +8,7 @@
       <HEAD>§ 900.1 Applicability.</HEAD>
       <P>(a) This part applies to each owner or operator of a widget furnace.</P>
       <P>(b) The Administrator may waive any requirement of this part.</P>
+      <P>(c) Each owner or operator shall operate each furnace in accordance with good air pollution control practice.</P>
     </DIV8>
     <DIV8 N="§ 900.2" TYPE="SECTION">
       <HEAD>§ 900.2 Notification and recordkeeping.</HEAD>
@@ -23,6 +24,20 @@
       <P>(a) The owner or operator of a widget furnace shall submit to the Administrator an annual report of the total emissions from each widget furnace for the preceding calendar year.</P>
       <P>(b) Foreign-national operators shall file Form W-9 with the Immigration and Naturalization Service.</P>
       <P>(c) Reports shall be signed by a responsible official.</P>
+    </DIV8>
+  </DIV6>
+  <DIV6 N="B" TYPE="SUBPART">
+    <HEAD>Subpart B—Standards of Performance for Small Widget Furnaces</HEAD>
+    <DIV8 N="§ 900.20" TYPE="SECTION">
+      <HEAD>§ 900.20 Electronic reporting.</HEAD>
+      <P>(a) Within 60 days after each performance test, the owner or operator must submit the results through the Compliance and Emissions Data Reporting Interface.</P>
+    </DIV8>
+  </DIV6>
+  <DIV6 N="C" TYPE="SUBPART">
+    <HEAD>Subpart C—Standards of Performance for Large Widget Furnaces</HEAD>
+    <DIV8 N="§ 900.30" TYPE="SECTION">
+      <HEAD>§ 900.30 Electronic reporting.</HEAD>
+      <P>(a) Within 60 days after each performance test, the owner or operator must submit the results through the Compliance and Emissions Data Reporting Interface.</P>
     </DIV8>
   </DIV6>
 </DIV5>

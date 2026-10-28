@@ -2,7 +2,7 @@
 through the gateway, with the tool grants in mesh.yaml:
 
     retriever  ecfr: get_part, search, list_titles   pulls regulation text, extracts requirements
-    flagger    (no tools)                            groups duplicates, flags outdated requirements
+    flagger    (no tools)                            groups duplicates and boilerplate, flags outdated requirements
     citer      ecfr: get_section                     re-reads each cited section and verifies quotes
 """
 
@@ -14,7 +14,8 @@ from typing import Any
 
 from agentmesh import AgentContext, MeshClient, Skill, build_agent_app
 from agentmesh.llm import ClaudeJSON
-from regagents.analysis import Requirement, extract_requirements, find_duplicates, find_outdated
+from regagents.analysis import (Requirement, extract_requirements, find_boilerplate, find_duplicates, find_outdated,
+                                similar_pairs)
 from regagents.ecfr import Section
 from regagents.judge import judge_duplicate, judge_outdated
 
@@ -49,15 +50,21 @@ def retriever(url: str = "http://127.0.0.1:9201", mesh: MeshClient | None = None
 
 async def flag(payload: dict[str, Any], ctx: AgentContext) -> dict[str, Any]:
     reqs = [Requirement(**r) for r in payload["requirements"]]
-    cap = int(payload.get("max_flags", 200))  # per type, so duplicates can't crowd out outdated flags
-    flags = find_duplicates(reqs, threshold=float(payload.get("duplicate_threshold", 0.55)))[:cap]
-    flags += find_outdated(reqs)[:cap]
+    cap = int(payload.get("max_flags", 200))  # per type, so one type can't crowd out the others
+    threshold = float(payload.get("duplicate_threshold", 0.55))
+    similar = similar_pairs(reqs, floor=threshold)
+    groups = {"duplicate": find_duplicates(reqs, threshold, similar),
+              "boilerplate": find_boilerplate(reqs, threshold, similar),
+              "outdated": find_outdated(reqs)}
+    flags = [f for found in groups.values() for f in found[:cap]]
 
     llm = ClaudeJSON.from_env()
     if llm is not None:
         sem = asyncio.Semaphore(8)
 
         async def review(f):
+            if f.type == "boilerplate":
+                return  # text repeated for different parties: nothing for the judge to decide
             async with sem:
                 if f.type == "duplicate":
                     f.judge = await judge_duplicate(llm, f.requirements[0].to_dict(), f.requirements[1].to_dict())
@@ -65,9 +72,10 @@ async def flag(payload: dict[str, Any], ctx: AgentContext) -> dict[str, Any]:
                     f.judge = await judge_outdated(llm, f.requirements[0].to_dict(), f.signals)
 
         await asyncio.gather(*(review(f) for f in flags))
-        flags = [f for f in flags if f.judge["verdict"]]
+        flags = [f for f in flags if f.judge is None or f.judge["verdict"]]
 
-    return {"requirements_found": len(reqs), "flags": [f.to_dict() for f in flags],
+    return {"requirements_found": len(reqs), "found": {k: len(v) for k, v in groups.items()},
+            "flags": [f.to_dict() for f in flags],
             "judge": llm.model if llm else None}
 
 
@@ -76,7 +84,7 @@ def flagger(url: str = "http://127.0.0.1:9202", mesh: MeshClient | None = None):
         name="flagger", description="Flags duplicative or outdated reporting requirements", url=url,
         handler=flag, mesh=mesh or MeshClient.from_env(),
         skills=[Skill("flag_requirements", "Flag requirements",
-                      "Extracts reporting requirements and flags duplicates and outdated ones",
+                      "Flags duplicate, cross-subpart boilerplate and outdated reporting requirements",
                       tags=["analysis"])],
     )
 

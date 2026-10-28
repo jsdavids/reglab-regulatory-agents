@@ -30,6 +30,7 @@ async def review(mesh: MeshClient, title: int, parts: list[str], date: str | Non
         "title": title, "parts": parts, "as_of": corpus["as_of"],
         "sections": corpus["sections"],
         "requirements_found": flagged["requirements_found"],
+        "found": flagged.get("found", {}),
         "judge": flagged.get("judge"),
         "flags": cited["flags"],
         "unverified": cited["unverified"],
@@ -46,9 +47,22 @@ def to_markdown(report: dict[str, Any]) -> str:
         + (f", {len(report['unverified'])} dropped because their quotes could not be verified." if report["unverified"] else "."),
         "",
     ]
-    for kind, title in [("duplicate", "Possible duplicates"), ("outdated", "Possibly outdated")]:
+    sections = [
+        ("duplicate", "Possible duplicates",
+         "Near-identical requirements that can bind the same regulated party: same subpart, "
+         "or restating the part's General Provisions."),
+        ("boilerplate", "Repeated across subparts",
+         "The same text imposed on different source categories. Not redundant for any one party; "
+         "candidates for harmonizing or moving into the General Provisions."),
+        ("outdated", "Possibly outdated", ""),
+    ]
+    found = report.get("found", {})
+    for kind, title, blurb in sections:
         items = [f for f in report["flags"] if f["type"] == kind]
-        lines += [f"## {title} ({len(items)})", ""]
+        total = f" of {found[kind]} found" if found.get(kind, len(items)) > len(items) else ""
+        lines += [f"## {title} ({len(items)}{total})", ""]
+        if blurb:
+            lines += [blurb, ""]
         for f in items:
             lines.append(f"- **{f['reason']}** (score {f['score']})")
             for c in f["citations"]:

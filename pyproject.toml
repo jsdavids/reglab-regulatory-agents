@@ -10,6 +10,8 @@ requires-python = ">=3.12"
 dependencies = [
     "agentmesh @ https://github.com/jsdavids/agent-mesh-core/archive/refs/tags/v0.1.0.tar.gz",
     "httpx>=0.28",
+    "numpy>=2.1",
+    "scipy>=1.14",  # sparse matrix products for all-pairs similarity
 ]
 
 [project.optional-dependencies]

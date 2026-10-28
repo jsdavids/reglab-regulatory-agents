@@ -1,6 +1,13 @@
 """Find reporting requirements in regulation text and flag the ones that look
 duplicative or outdated.
 
+Near-identical requirements are split by who they bind. Two requirements in
+the same subpart (or one in the part's General Provisions, which apply to
+every subpart) can fall on the same regulated party: those are flagged as
+`duplicate`. The same sentence repeated across subparts for different source
+categories binds different parties, so it isn't redundant reporting; it's
+flagged as `boilerplate`, a candidate for harmonizing or centralizing the text.
+
 These are transparent baselines on purpose: every flag carries the signals
 that produced it, and the eval harness measures how often they're right.
 An optional LLM judge (see judge.py) can confirm candidates.
@@ -15,10 +22,13 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from importlib import resources
-from itertools import combinations
+from collections.abc import Iterator
 from typing import Any
 
-from regagents.ecfr import Section
+import numpy as np
+from scipy import sparse
+
+from regagents.ecfr import Paragraph, Section
 
 OBLIGATION_RE = re.compile(
     r"\b(shall|must|is required to|are required to|will be required to|is responsible for)\b", re.I)
@@ -34,6 +44,7 @@ _DEADLINE_RE = re.compile(
 _YEAR_REF_RE = re.compile(r"\b(calendar|fiscal|model|crop|reporting) years?\s+(19\d{2}|20[01]\d)\b", re.I)
 _WORD_RE = re.compile(r"[a-z][a-z\-]+")
 _REF_RE = re.compile(r"§+\s*(\d+\.\d+[a-z]*)")
+_GENERAL_RE = re.compile(r"\bgeneral provisions\b", re.I)
 _STOPWORDS = frozenset("""
 a an and are as at be been by for from has have in is it its may must of on or such that the
 their them then there these this those to under upon was were which who will with within shall
@@ -52,14 +63,30 @@ class Requirement:
     text: str
     url: str
     last_amended: str | None = None
+    subpart: str = ""
+    subpart_heading: str = ""
+
+    @property
+    def part(self) -> str:
+        return self.section.split(".")[0]
+
+    @property
+    def general(self) -> bool:
+        """In the part's General Provisions, which apply to every subpart."""
+        return bool(_GENERAL_RE.search(self.subpart_heading))
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
+def same_scope(a: Requirement, b: Requirement) -> bool:
+    """Whether one regulated party can be bound by both requirements."""
+    return a.part == b.part and (a.subpart == b.subpart or a.general or b.general)
+
+
 @dataclass
 class Flag:
-    type: str  # "duplicate" | "outdated"
+    type: str  # "duplicate" | "boilerplate" | "outdated"
     requirements: list[Requirement]
     score: float
     reason: str
@@ -84,19 +111,24 @@ def is_reporting_requirement(sentence: str) -> bool:
     return bool(OBLIGATION_RE.search(sentence) and REPORTING_RE.search(sentence))
 
 
-def extract_requirements(sections: list[Section]) -> list[Requirement]:
-    out = []
+def sentences(sections: list[Section]) -> Iterator[Requirement]:
+    """Every sentence of every paragraph, shaped as a Requirement (whether or not it is one)."""
     for s in sections:
         for p_index, para in enumerate(s.paragraphs):
             for s_index, sentence in enumerate(split_sentences(para.text)):
-                if is_reporting_requirement(sentence):
-                    cite = f"{s.citation}{para.label}"
-                    out.append(Requirement(
-                        id=f"{s.section}{para.label or f'[{p_index}]'}#{s_index}", citation=cite,
-                        section=s.section, paragraph=para.label, heading=s.heading, text=sentence,
-                        url=s.url, last_amended=s.last_amended,
-                    ))
-    return out
+                yield _sentence(s, para, p_index, s_index, sentence)
+
+
+def _sentence(s: Section, para: Paragraph, p_index: int, s_index: int, text: str) -> Requirement:
+    return Requirement(
+        id=f"{s.section}{para.label or f'[{p_index}]'}#{s_index}", citation=f"{s.citation}{para.label}",
+        section=s.section, paragraph=para.label, heading=s.heading, text=text, url=s.url,
+        last_amended=s.last_amended, subpart=s.subpart, subpart_heading=s.subpart_heading,
+    )
+
+
+def extract_requirements(sections: list[Section]) -> list[Requirement]:
+    return [r for r in sentences(sections) if is_reporting_requirement(r.text)]
 
 
 # -- duplicates ----------------------------------------------------------------
@@ -132,6 +164,31 @@ class TfIdf:
         ra, rb = self.refs[i], self.refs[j]
         return words * (len(ra & rb) / len(ra | rb) if ra or rb else 1.0)
 
+    def pairs(self, floor: float, block: int = 512) -> Iterator[tuple[int, int, float]]:
+        """Every pair i < j with cosine(i, j) >= floor.
+
+        Word cosines come from sparse matrix products, a block of rows at a
+        time; the cross-reference factor can only lower a score, so it's
+        applied to the pairs whose word cosine already clears the floor."""
+        vocab = {t: k for k, t in enumerate(self.idf)}
+        indptr, indices, data = [0], [], []
+        for vec in self.vectors:
+            indices += [vocab[t] for t in vec]
+            data += vec.values()
+            indptr.append(len(indices))
+        x = sparse.csr_matrix((np.array(data, dtype=np.float64), indices, indptr),
+                              shape=(len(self.vectors), len(vocab)))
+        xt = x.T.tocsc()
+        for start in range(0, x.shape[0], block):
+            words = (x[start:start + block] @ xt).tocoo()
+            keep = (words.data >= floor - 1e-9) & (words.col > words.row + start)
+            for r, j, w in zip(words.row[keep].tolist(), words.col[keep].tolist(), words.data[keep].tolist()):
+                i = r + start
+                ra, rb = self.refs[i], self.refs[j]
+                score = w * (len(ra & rb) / len(ra | rb) if ra or rb else 1.0)
+                if score >= floor:
+                    yield i, j, score
+
     def shared_terms(self, i: int, j: int, k: int = 8) -> list[str]:
         a, b = self.vectors[i], self.vectors[j]
         common = sorted(set(a) & set(b), key=lambda t: -(a[t] * b[t]))
@@ -145,56 +202,96 @@ def similarity(a: str, b: str, corpus: list[str] | None = None) -> float:
     return model.cosine(len(docs) - 2, len(docs) - 1)
 
 
-def find_duplicates(reqs: list[Requirement], threshold: float = 0.55) -> list[Flag]:
-    """Group near-identical requirements into one flag per group.
+@dataclass
+class Similar:
+    """Requirement pairs above a similarity floor, each marked same-scope or not.
+    Computed once and shared by grouping, boilerplate and the eval sampler."""
+    reqs: list[Requirement]
+    model: TfIdf
+    pairs: list[tuple[int, int, float, bool]]  # (i, j, cosine, same_scope)
+    floor: float
 
-    The same boilerplate sentence often recurs across dozens of subparts, so
-    pairwise flags explode quadratically. Groups form around a seed: a
-    requirement joins only if it is within `threshold` of the seed itself,
-    which keeps single-linkage chaining from merging unrelated text."""
+
+def similar_pairs(reqs: list[Requirement], floor: float = 0.30) -> Similar:
     model = TfIdf([r.text for r in reqs])
-    neighbours: dict[int, dict[int, float]] = {i: {} for i in range(len(reqs))}
-    for i, j in combinations(range(len(reqs)), 2):
-        if reqs[i].section == reqs[j].section and reqs[i].paragraph == reqs[j].paragraph:
+    pairs = []
+    for i, j, score in model.pairs(floor):
+        a, b = reqs[i], reqs[j]
+        if a.section == b.section and a.paragraph == b.paragraph:
             continue  # sentences of one paragraph restate each other by design
-        score = model.cosine(i, j)
+        pairs.append((i, j, score, same_scope(a, b)))
+    return Similar(reqs, model, pairs, floor)
+
+
+def seed_groups(n: int, edges: list[tuple[int, int, float]], threshold: float) -> list[tuple[int, list[int], dict[int, float]]]:
+    """Group around seeds: a node joins only if it is within `threshold` of the
+    seed itself, which keeps single-linkage chaining from merging unrelated
+    text. Returns (seed, members by similarity, the seed's similarities)."""
+    neighbours: dict[int, dict[int, float]] = {}
+    for i, j, score in edges:
         if score >= threshold:
-            neighbours[i][j] = neighbours[j][i] = score
+            neighbours.setdefault(i, {})[j] = score
+            neighbours.setdefault(j, {})[i] = score
     assigned: set[int] = set()
-    flags = []
+    groups = []
     for seed in sorted(neighbours, key=lambda i: (-len(neighbours[i]), i)):
-        if seed in assigned or not neighbours[seed]:
+        if seed in assigned:
             continue
-        members = sorted((j for j in neighbours[seed] if j not in assigned), key=lambda j: -neighbours[seed][j])
+        members = sorted((j for j in neighbours[seed] if j not in assigned), key=lambda j: (-neighbours[seed][j], j))
         if not members:
             continue
         assigned.update([seed, *members])
+        groups.append((seed, members, neighbours[seed]))
+    return groups
+
+
+def claimed_pairs(similar: Similar, threshold: float) -> set[tuple[int, int]]:
+    """The (seed, member) pairs that `find_duplicates` reports at `threshold`, as (min, max)."""
+    edges = [(i, j, s) for i, j, s, same in similar.pairs if same]
+    return {(min(seed, m), max(seed, m)) for seed, members, _ in seed_groups(len(similar.reqs), edges, threshold)
+            for m in members}
+
+
+def _group_flags(similar: Similar, kind: str, same: bool, threshold: float) -> list[Flag]:
+    if threshold < similar.floor:
+        raise ValueError(f"threshold {threshold} is below the floor {similar.floor} the pairs were computed at")
+    reqs, model = similar.reqs, similar.model
+    edges = [(i, j, s) for i, j, s, scope in similar.pairs if scope == same]
+    flags = []
+    for seed, members, sims_of in seed_groups(len(reqs), edges, threshold):
         group = [reqs[seed], *(reqs[j] for j in members)]
-        sims = [neighbours[seed][j] for j in members]
+        sims = [sims_of[j] for j in members]
         sections = sorted({r.section for r in group})
-        reason = (f"{group[0].citation} and {group[1].citation} impose near-identical reporting obligations"
-                  if len(group) == 2 else
-                  f"{len(group)} near-identical reporting requirements across {len(sections)} sections")
-        flags.append(Flag("duplicate", group, sum(sims) / len(sims), reason, [{
+        subparts = sorted({f"{r.part} {r.subpart}".strip() for r in group})
+        if kind == "duplicate" and group[0].general and not any(r.general for r in group[1:]):
+            n, k = len(group) - 1, len(subparts) - 1
+            reason = (f"{n} requirement{'s' * (n > 1)} in {k} subpart{'s' * (k > 1)} "
+                      f"restate{'s' * (n == 1)} the General Provisions at {group[0].citation}")
+        elif kind == "duplicate":
+            reason = (f"{group[0].citation} and {group[1].citation} impose near-identical reporting obligations"
+                      if len(group) == 2 else
+                      f"{len(group) - 1} reporting requirements near-identical to {group[0].citation}, "
+                      f"across {len(sections)} sections")
+        else:
+            reason = (f"near-identical reporting text repeated in {len(subparts)} subparts "
+                      f"({len(group)} requirements)")
+        flags.append(Flag(kind, group, sum(sims) / len(sims), reason, [{
             "kind": "text_similarity", "seed": group[0].citation, "min_cosine": round(min(sims), 4),
             "shared_terms": model.shared_terms(seed, members[0]),
-            "members": [{"citation": reqs[j].citation, "cosine": round(neighbours[seed][j], 4)} for j in members],
+            "subparts": subparts,
+            "members": [{"citation": reqs[j].citation, "cosine": round(sims_of[j], 4)} for j in members],
         }]))
     return sorted(flags, key=lambda f: (-len(f.requirements), -f.score))
 
 
-def candidate_pairs(reqs: list[Requirement], floor: float = 0.30) -> list[tuple[Requirement, Requirement, float]]:
-    """Pairs above a low similarity floor: the pool hand labels are drawn from."""
-    model = TfIdf([r.text for r in reqs])
-    pairs = []
-    for i, j in combinations(range(len(reqs)), 2):
-        a, b = reqs[i], reqs[j]
-        if a.section == b.section and a.paragraph == b.paragraph:
-            continue
-        score = model.cosine(i, j)
-        if score >= floor:
-            pairs.append((a, b, score))
-    return sorted(pairs, key=lambda p: -p[2])
+def find_duplicates(reqs: list[Requirement], threshold: float = 0.55, similar: Similar | None = None) -> list[Flag]:
+    """Groups of near-identical requirements that can bind the same regulated party."""
+    return _group_flags(similar or similar_pairs(reqs, threshold), "duplicate", True, threshold)
+
+
+def find_boilerplate(reqs: list[Requirement], threshold: float = 0.55, similar: Similar | None = None) -> list[Flag]:
+    """Groups of near-identical requirements repeated across subparts (different parties)."""
+    return _group_flags(similar or similar_pairs(reqs, threshold), "boilerplate", False, threshold)
 
 
 # -- outdated -------------------------------------------------------------------

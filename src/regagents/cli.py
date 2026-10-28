@@ -2,7 +2,9 @@
 
     regagents review --title 40 --parts 60          run the agents (needs `agentmesh up mesh.yaml`)
     regagents eval sample --title 40 --parts 60 63  write eval/to_label.jsonl
-    regagents eval score eval/labels.jsonl [--judge]
+    regagents eval label eval/to_label.jsonl         prompt for each unlabelled item
+    regagents eval score eval/to_label.jsonl [--judge]
+    regagents eval agree mine.jsonl theirs.jsonl     Cohen's kappa between two labellers
 """
 
 from __future__ import annotations
@@ -44,9 +46,15 @@ def main(argv: list[str] | None = None) -> int:
     p_sample.add_argument("--title", type=int, required=True)
     p_sample.add_argument("--parts", nargs="+", required=True)
     p_sample.add_argument("--date")
-    p_sample.add_argument("--per-stratum", type=int, default=25)
+    p_sample.add_argument("--per-stratum", type=int, default=12, help="8 strata, so 12 gives about 96 items")
     p_sample.add_argument("--seed", type=int, default=0)
     p_sample.add_argument("--out", type=Path, default=Path("eval/to_label.jsonl"))
+    p_sample.add_argument("--carry", type=Path, help="copy labels from an earlier sample (same seed) by item id")
+    p_label = eval_sub.add_parser("label", help="label items interactively (resumable)")
+    p_label.add_argument("labels", type=Path)
+    p_agree = eval_sub.add_parser("agree", help="inter-annotator agreement")
+    p_agree.add_argument("mine", type=Path)
+    p_agree.add_argument("theirs", type=Path)
     p_score = eval_sub.add_parser("score")
     p_score.add_argument("labels", type=Path)
     p_score.add_argument("--threshold", type=float, default=0.55)
@@ -63,9 +71,14 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(to_markdown(report))
     elif args.action == "sample":
-        n = ev.sample_command(args.title, args.parts, args.out, args.per_stratum, args.seed, args.date)
+        n = ev.sample_command(args.title, args.parts, args.out, args.per_stratum, args.seed, args.date, args.carry)
         print(f"wrote {n} items to {args.out}; set \"label\" to true/false on each line, then run "
               f"`regagents eval score {args.out}`")
+    elif args.action == "label":
+        n = ev.label_command(args.labels)
+        print(f"{n} items labelled in {args.labels}")
+    elif args.action == "agree":
+        print(json.dumps(ev.agreement(ev.load_items(args.mine), ev.load_items(args.theirs)), indent=2))
     else:
         items = ev.load_items(args.labels)
         predictions = asyncio.run(ev.judged_predictions(items, args.threshold)) if args.judge else None
