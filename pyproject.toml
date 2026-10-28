@@ -8,19 +8,19 @@ version = "0.1.0"
 description = "Regulatory research agents: pull eCFR text over MCP, flag duplicate or outdated reporting requirements, and cite the exact sections relied on. Evaluated against hand labels."
 requires-python = ">=3.12"
 dependencies = [
-    "agentmesh",
+    "agentmesh @ https://github.com/jsdavids/agent-mesh-core/archive/refs/tags/v0.1.0.tar.gz",
     "httpx>=0.28",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio"]
-llm = ["agentmesh[llm]"]
+llm = ["agentmesh[llm] @ https://github.com/jsdavids/agent-mesh-core/archive/refs/tags/v0.1.0.tar.gz"]
 
 [project.scripts]
 regagents = "regagents.cli:main"
 
-[tool.uv.sources]
-agentmesh = { path = "../agent-mesh-core", editable = true }
+[tool.hatch.metadata]
+allow-direct-references = true  # agentmesh is installed from its GitHub release tarball (no git needed)
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/regagents"]

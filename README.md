@@ -5,7 +5,7 @@ federal regulation text from the public **eCFR API** through an MCP server,
 flags reporting requirements that look **duplicative** or **outdated**, and cites
 the exact paragraph it relied on, re-reading each quote from eCFR to confirm it.
 
-Built on [`agent-mesh-core`](../agent-mesh-core). Aimed at the Stanford RegLab
+Built on [`agent-mesh-core`](https://github.com/jsdavids/agent-mesh-core). Aimed at the Stanford RegLab
 Data Scientist role: the deliverable is a *measured* result, not a demo.
 
 ```mermaid
@@ -33,7 +33,10 @@ and the as-of date.
 ## Run it
 
 ```bash
-uv venv -p 3.13 && uv pip install -e ../agent-mesh-core -e '.[dev]'
+uv venv -p 3.13 && uv pip install -e '.[dev]'
+# agentmesh (the shared core) installs from its v0.1.0 release on GitHub. To work on
+# the core at the same time: git clone https://github.com/jsdavids/agent-mesh-core ../agent-mesh-core
+#   && uv pip install -e ../agent-mesh-core
 .venv/bin/pytest                                  # 20 tests on synthetic eCFR fixtures
 
 export AGENTMESH_SECRET=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
